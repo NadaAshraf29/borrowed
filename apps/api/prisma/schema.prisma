@@ -1,0 +1,498 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleType {
+  GUEST
+  RENTER
+  OWNER
+  DELIVERY
+  ADMIN
+}
+
+enum DressCondition {
+  BRAND_NEW
+  LIKE_NEW
+  EXCELLENT
+  GOOD
+}
+
+enum DressStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  UNAVAILABLE
+  ARCHIVED
+}
+
+enum RentalStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  PICKUP_SCHEDULED
+  COLLECTED_FROM_OWNER
+  PREPARING
+  OUT_FOR_DELIVERY
+  DELIVERED
+  RETURN_SCHEDULED
+  OUT_FOR_COLLECTION
+  COLLECTED_FROM_RENTER
+  RETURNING_TO_OWNER
+  RETURNED_TO_OWNER
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum DeliveryTaskStage {
+  PICKUP_FROM_OWNER
+  DELIVER_TO_RENTER
+  COLLECT_FROM_RENTER
+  RETURN_TO_OWNER
+}
+
+enum DeliveryTaskStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DIGITAL_WALLET
+  CASH_ON_DELIVERY
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  ELIGIBLE
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id              String         @id @default(uuid())
+  email           String         @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phoneNumber     String?
+  avatarUrl       String?
+  isActive        Boolean        @default(true)
+  payoutMethod    String?        // e.g. Instapay, Bank Transfer
+  payoutDetails   String?        // e.g. Phone or IBAN
+  roles           UserRole[]
+  addresses       Address[]
+  ownedDresses    Dress[]        @relation("OwnerDresses")
+  rentalsAsRenter RentalBooking[] @relation("RenterBookings")
+  favorites       Favorite[]
+  reviews         Review[]
+  earnings        OwnerEarning[]
+  payouts         OwnerPayout[]
+  notifications   Notification[]
+  supportTickets  SupportTicket[]
+  deliveryTasks   DeliveryTask[] @relation("DriverTasks")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([email])
+}
+
+model Role {
+  id          String     @id @default(uuid())
+  name        RoleType   @unique
+  description String?
+  users       UserRole[]
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, roleId])
+}
+
+model City {
+  id           String        @id @default(uuid())
+  name         String        @unique
+  governorate  String
+  deliveryFee  Int           @default(150) // in minor units / EGP
+  isActive     Boolean       @default(true)
+  addresses    Address[]
+  zones        DeliveryZone[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model DeliveryZone {
+  id          String   @id @default(uuid())
+  cityId      String
+  name        String
+  zoneCode    String   @unique
+  baseFee     Int
+  city        City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  addresses   Address[]
+}
+
+model Address {
+  id          String    @id @default(uuid())
+  userId      String
+  cityId      String
+  zoneId      String?
+  title       String    @default("Home")
+  area        String
+  street      String
+  building    String
+  floor       String?
+  apartment   String?
+  notes       String?
+  isDefault   Boolean   @default(false)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city        City      @relation(fields: [cityId], references: [id])
+  zone        DeliveryZone? @relation(fields: [zoneId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model DressCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  imageUrl    String?
+  dresses     Dress[]
+  createdAt   DateTime @default(now())
+}
+
+model Dress {
+  id               String            @id @default(uuid())
+  title            String
+  description      String
+  brand            String
+  categoryId       String
+  category         DressCategory     @relation(fields: [categoryId], references: [id])
+  occasions        String[]          // e.g. ["Weddings", "Galas", "Parties"]
+  size             String            // e.g. "S", "M", "L", "FR 38", "US 4"
+  color            String
+  material         String?
+  condition        DressCondition    @default(EXCELLENT)
+  rentalPrice      Int               // In EGP
+  replacementValue Int?              // Retail replacement cost
+  city             String            // Location of dress
+  pickupArea       String            // Neighborhood/Area
+  status           DressStatus       @default(PENDING_REVIEW)
+  rejectionReason  String?
+  ownerId          String
+  owner            User              @relation("OwnerDresses", fields: [ownerId], references: [id], onDelete: Cascade)
+  images           DressImage[]
+  moderations      DressModeration[]
+  availabilities   DressAvailability[]
+  rentalBookings   RentalBooking[]
+  favorites        Favorite[]
+  reviews          Review[]
+  viewCount        Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([status, categoryId, city])
+  @@index([brand, size, color])
+}
+
+model DressImage {
+  id           String   @id @default(uuid())
+  dressId      String
+  url          String
+  isCover      Boolean  @default(false)
+  displayOrder Int      @default(0)
+  dress        Dress    @relation(fields: [dressId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@index([dressId, displayOrder])
+}
+
+model DressModeration {
+  id          String      @id @default(uuid())
+  dressId     String
+  adminId     String
+  fromStatus  DressStatus
+  toStatus    DressStatus
+  reason      String?
+  notes       String?
+  dress       Dress       @relation(fields: [dressId], references: [id], onDelete: Cascade)
+  createdAt   DateTime    @default(now())
+}
+
+model DressAvailability {
+  id          String   @id @default(uuid())
+  dressId     String
+  startDate   DateTime
+  endDate     DateTime
+  reason      String?  // e.g. "Owner Reserved", "Dry Cleaning"
+  isBlocked   Boolean  @default(true)
+  dress       Dress    @relation(fields: [dressId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@index([dressId, startDate, endDate])
+}
+
+model RentalBooking {
+  id                     String                @id @default(uuid())
+  bookingReference       String                @unique // e.g. "BRW-2026-8941"
+  dressId                String
+  dress                  Dress                 @relation(fields: [dressId], references: [id])
+  renterId               String
+  renter                 User                  @relation("RenterBookings", fields: [renterId], references: [id])
+  
+  // Critical Dates
+  occasionDate           DateTime
+  scheduledDeliveryDate  DateTime
+  actualDeliveryDate     DateTime?
+  scheduledReturnDate    DateTime
+  actualReturnDate       DateTime?
+  
+  // Historical Financial Snapshot
+  rentalPriceSnapshot    Int
+  commissionRateSnapshot Int                   // e.g. 20 (percent)
+  platformCommission     Int                   // e.g. 300
+  ownerEarnings          Int                   // e.g. 1200
+  deliveryFeeSnapshot    Int                   // e.g. 150
+  depositFeeSnapshot     Int                   @default(0)
+  totalAmount            Int
+  
+  // Statuses
+  status                 RentalStatus          @default(PENDING_PAYMENT)
+  paymentStatus          PaymentStatus         @default(PENDING)
+  paymentMethod          PaymentMethod         @default(CREDIT_CARD)
+  
+  // Addresses
+  deliveryAddressJson    Json
+  pickupAddressJson      Json
+  
+  // Relations
+  statusHistory          RentalStatusHistory[]
+  payments               Payment[]
+  earnings               OwnerEarning[]
+  deliveryTasks          DeliveryTask[]
+  refunds                Refund[]
+  reviews                Review[]
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  @@index([status, paymentStatus])
+  @@index([dressId, occasionDate])
+  @@index([renterId])
+}
+
+model RentalStatusHistory {
+  id              String        @id @default(uuid())
+  rentalBookingId String
+  status          RentalStatus
+  note            String?
+  actorId         String?
+  actorName       String?
+  rentalBooking   RentalBooking @relation(fields: [rentalBookingId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@index([rentalBookingId])
+}
+
+model Payment {
+  id              String               @id @default(uuid())
+  rentalBookingId String
+  amount          Int
+  currency        String               @default("EGP")
+  method          PaymentMethod
+  status          PaymentStatus        @default(PENDING)
+  referenceCode   String               @unique
+  providerDetails Json?
+  transactions    PaymentTransaction[]
+  rentalBooking   RentalBooking        @relation(fields: [rentalBookingId], references: [id], onDelete: Cascade)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+}
+
+model PaymentTransaction {
+  id          String   @id @default(uuid())
+  paymentId   String
+  eventType   String   // e.g. "INITIATED", "SUCCESS", "WEBHOOK_VERIFIED"
+  amount      Int
+  status      String
+  rawPayload  Json?
+  payment     Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+}
+
+model OwnerEarning {
+  id              String        @id @default(uuid())
+  ownerId         String
+  rentalBookingId String
+  grossAmount     Int           // Rental price
+  commissionRate  Int           // e.g. 20
+  commissionFee   Int           // Platform deduction
+  netEarnings     Int           // Owner payable
+  payoutStatus    PayoutStatus  @default(PENDING)
+  payoutId        String?
+  owner           User          @relation(fields: [ownerId], references: [id])
+  rentalBooking   RentalBooking @relation(fields: [rentalBookingId], references: [id])
+  payout          OwnerPayout?  @relation(fields: [payoutId], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([ownerId, payoutStatus])
+}
+
+model OwnerPayout {
+  id            String         @id @default(uuid())
+  ownerId       String
+  payoutRef     String         @unique // e.g. "PAY-2026-0042"
+  totalAmount   Int
+  method        String         // Bank Transfer, Instapay
+  accountInfo   String
+  status        PayoutStatus   @default(PROCESSING)
+  processedBy   String?
+  processedAt   DateTime?
+  notes         String?
+  owner         User           @relation(fields: [ownerId], references: [id])
+  earnings      OwnerEarning[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model DeliveryTask {
+  id              String             @id @default(uuid())
+  rentalBookingId String
+  stage           DeliveryTaskStage
+  status          DeliveryTaskStatus @default(PENDING)
+  driverId        String?
+  targetAddress   String
+  contactName     String
+  contactPhone    String
+  scheduledDate   DateTime
+  completedAt     DateTime?
+  proofNotes      String?
+  proofImageUrl   String?
+  failedReason    String?
+  driver          User?              @relation("DriverTasks", fields: [driverId], references: [id])
+  rentalBooking   RentalBooking      @relation(fields: [rentalBookingId], references: [id], onDelete: Cascade)
+  proofs          DeliveryProof[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([driverId, status])
+  @@index([rentalBookingId, stage])
+}
+
+model DeliveryProof {
+  id             String       @id @default(uuid())
+  deliveryTaskId String
+  imageUrl       String?
+  otpCode        String?
+  recipientName  String?
+  notes          String?
+  driverLocation String?
+  deliveryTask   DeliveryTask @relation(fields: [deliveryTaskId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+}
+
+model Refund {
+  id              String        @id @default(uuid())
+  rentalBookingId String
+  amount          Int
+  reason          String
+  status          String        @default("PROCESSED")
+  processedBy     String?
+  rentalBooking   RentalBooking @relation(fields: [rentalBookingId], references: [id])
+  createdAt       DateTime      @default(now())
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String
+  dressId   String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dress     Dress    @relation(fields: [dressId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, dressId])
+}
+
+model Review {
+  id              String         @id @default(uuid())
+  rentalBookingId String
+  dressId         String
+  userId          String
+  rating          Int            @default(5)
+  comment         String
+  images          String[]
+  user            User           @relation(fields: [userId], references: [id])
+  dress           Dress          @relation(fields: [dressId], references: [id])
+  rentalBooking   RentalBooking  @relation(fields: [rentalBookingId], references: [id])
+  createdAt       DateTime       @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // e.g. "RENTAL_CONFIRMED", "DELIVERY_OUT", "DRESS_APPROVED"
+  link      String?
+  isRead    Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model SupportTicket {
+  id        String   @id @default(uuid())
+  userId    String
+  subject   String
+  message   String
+  status    String   @default("OPEN")
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlatformSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
